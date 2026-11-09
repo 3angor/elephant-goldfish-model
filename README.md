@@ -87,6 +87,21 @@ Fresh reviewers check the design, its clarity, its fit with the code, and its im
 
 See the [workflow guide](docs/getting_started.md) for the full process, including saving approved specifications under `docs/designs/`.
 
+## Fork review modes
+
+This fork adds two explicit review modes (see [the contract](resources/review-modes.md)):
+
+- **Critique** (default): findings and alternatives only; target files stay unchanged.
+- **Full**: scoped authorized corrections, agreed checks, and fresh re-review.
+
+Select `ReviewMode=critique` or `ReviewMode=full` independently of stage presets.
+Full mode requires an edit scope; it does not authorize implementing a product
+merely because its design is reviewed. Both modes have shared agent/round limits,
+leave unresolved risks open, and never automatically merge or deploy.
+These are workflow instructions, not a technical sandbox. The published Google
+plugin does not include this fork's changes; this branch is not installed by
+following the upstream installation commands above.
+
 ## How it works
 
 <table>
@@ -135,3 +150,4 @@ Read [contributing](https://github.com/google/elephant-goldfish-model/blob/main/
 ## License
 
 [Apache 2.0](LICENSE). This is not an officially supported Google product.
+

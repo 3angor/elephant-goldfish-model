@@ -14,27 +14,31 @@ description: >-
 When running in Codex or ChatGPT Work, first read [Codex integration](../../docs/codex.md).
 In Claude Code or Cowork, read `${CLAUDE_PLUGIN_ROOT}/docs/claude.md` first.
 
-Reviews and validates a design document through specialized reviewer personas.
+Reviews a design through specialized personas.
+
+## Review mode contract (read before any dispatch or edit)
+
+Read [Review execution modes](../../resources/review-modes.md) first. Accept and
+propagate `ReviewMode`, `EditScope`, `Checks`, `MaxRounds`, `MaxAgentLaunches`, and
+`MaxParallelAgents`. Default to `ReviewMode: critique`. The mode contract takes
+precedence over remediation gates, convergence rules, and repeat instructions
+below. A stage preset never grants write permission. Preserve the coordinator's
+shared budgets across nested calls and resumes.
 
 ## Delegation
 
-A Goldfish runs in a fresh context with no conversation history. Spawn each
+Goldfish reviewers start without conversation history. Spawn each
 subagent with your harness's subagent tool (Antigravity: `invoke_subagent`; Claude Code: `Agent`; Codex: `spawn_agent`). Each subagent is defined in `agents/<file>.md`, and its
 frontmatter `name` (for example `egm-zoom-out`) is the subagent type to request
 where your harness registers named subagents. Otherwise spawn a general-purpose
-subagent and tell it to read that persona file first. Pass the prompt verbatim
-and wait for the report. If your harness cannot nest subagents,
-use direct dispatch instead of the synthesizer. See `docs/harnesses.md`.
+subagent and tell it to read that persona file first. Pass the prompt, read-only constraints, mode contract path, and allocated
+budget to every reviewer; wait for its report. Prefer direct dispatch; see `docs/harnesses.md`.
 If your harness has no subagent tool, stop and tell the user: a review in the same context is not a Goldfish review.
 
 ## Execution Constraints (CRITICAL)
 
-1.  **Artifact-First Delivery (MANDATORY)**: You are **STRICTLY FORBIDDEN** from
-    presenting large proposals, drafts, summaries, or plans directly in the chat
-    pane. You **MUST** write them to the working directory (or your harness's
-    artifact directory, if it has one) using your file-writing tool and then
-    tell the user in chat the file path and ask for review. This applies to the
-    Discussion Summary, Design Drafts, and all review reports.
+1.  **Artifact-First Delivery**: Write long reports and proposals to the agreed
+    artifact directory; send their paths in chat for review.
 2.  **Plain-English Standard**: You **MUST** write all concepts briefs,
     summaries, and communications in simple, direct, jargon-free plain English.
     Explain technical mechanisms directly. Do not summarize away substance or
@@ -129,35 +133,14 @@ If your harness has no subagent tool, stop and tell the user: a review in the sa
         Pipeline Presets single-select gate to the user (using a structured
         question tool such as `ask_question` if your harness has one, or plain
         chat).
-2.  **Modal Invariants & Wire Payload**:
-
-    *   The question payload **MUST** contain strictly one question object
-        (`len(questions) == 1`). Multi-question payloads are strictly forbidden.
-    *   The question tool **MUST** be the sole tool call in this turn payload.
-        You **MUST** yield execution immediately upon invocation.
-    *   `is_multi_select` **MUST** be `false`. Combinatorial multi-select
-        checklists are strictly prohibited to protect topological dependencies
-        (5 → 6 → 7 → 8 → 9).
-    *   Option 0 **MUST** be the primary default action (without a
-        `(Recommended)` prefix).
-    *   Payload specification:
-
-        ```json
-        {
-          "questions": [
-            {
-              "question": "Select the review execution mode for this document:",
-              "options": [
-                "Interactive review with all review rubrics (step-by-step, check in after each review)",
-                "Consolidated report with all review rubrics (runs full flow without stopping)",
-                "Feature spec only (evaluate design without considering implementation)",
-                "Implementation plan only (evaluate design for implementation readiness)"
-              ],
-              "is_multi_select": false
-            }
-          ]
-        }
-        ```
+2.  **Preset Gate**: Ask one single-select question, as the sole tool call,
+    then yield: "Select the review execution mode for this document:".
+    This chooses stages, not `ReviewMode` permissions. Options, in order:
+    * Interactive review with all review rubrics (step-by-step).
+    * Consolidated report with all review rubrics (without checkpoints).
+    * Feature spec only.
+    * Implementation plan only.
+    Do not label an option `(Recommended)` or allow multi-selection.
 
 3.  **Action Dispatch Based on Preset**:
 
@@ -228,6 +211,11 @@ Once the semantic split and execution preset are confirmed:
 
 ### Subflow Checkpoint Gates & Pause/Resume Protocol
 
+In `critique`, only proceed/pause/report choices apply; skip all remediation
+options and resolver calls. In `full`, already-authorized in-scope fixes and
+checks may proceed without repeated gates; disputed decisions still pause.
+All repeated stages consume `MaxRounds` and the shared launch budget.
+
 All interactive review stages conclude with an explicit single-select gate
 (using a structured question tool such as `ask_question` with
 `len(questions) == 1`, `is_multi_select: false`, sole tool call in turn, or
@@ -249,7 +237,7 @@ plain chat):
         *   Option 2: `I will update doc manually (pause session; notify me in
             chat when edits are complete to re-run)`.
         *   Option 3: `Pause Review (save progress and exit)`.
-2.  **Resolution Semantics (Option 1 for Stages 7 and 9)**:
+2.  **Resolution Semantics (full mode only, Option 1 for Stages 7 and 9)**:
     *   **Hand-off to Resolver**: The agent invokes `egm-resolve` in the primary
         Elephant context window on the target range (`FeatureRange` or
         `DetailedRange`), passing the parsed findings from `critic_report.md` or
@@ -271,13 +259,18 @@ plain chat):
         *   **1-Audit Convergence Cap**: Each stage allows a maximum of 1
             re-audit. If manual doc updates are requested again after a
             re-audit, inform the author that the cap is reached, document
-            residual findings as accepted trade-offs, auto-bind Option 0, and
-            advance to the next stage.
+            residual findings as open, and pause for the user. Do not auto-bind
+            a proceed option or infer risk acceptance.
 4.  **Graceful Halt Semantics (`Pause Review`)**:
     *   Halt execution immediately with zero tools, preserving all report
         artifacts.
 
 ### Subflow: Uninterrupted Full Flow
+
+"Full Flow" means all selected stages, not permission to modify files. In
+`critique` produce reports only. In `full`, apply the bounded correction and
+verification protocol from the mode contract before advancing; report blockers
+and budget exhaustion rather than claiming all stages completed.
 
 1.  **Uninterrupted Stage Execution**: Execute all five review stages in
     sequence without interactive checkpoint pauses between steps. For each
@@ -334,7 +327,7 @@ plain chat):
         proceed?"`, Option 0: `"Proceed to next stage: Stage 6 (Comprehension
         Test)"`.
     *   **Stage 8 (Feature Spec Gates Only)**: Question: `"Stage 8 (Intermediate
-        Zoom Out) completed. High-level architecture verified. How would you
+        Zoom Out) completed. Findings recorded. How would you
         like to proceed?"`, Option 0: `"Conclude review and begin detailed
         implementation planning"`.
     *   **Stage 8 (Interactive Full Flow)**: Question: `"Stage 8 (Intermediate
@@ -424,3 +417,4 @@ plain chat):
     *   After fixes are applied, re-read `TargetFile` to recalculate line
         bounds, and conclude the review session (or re-run Stage 9, max 1
         re-audit).
+

@@ -31,6 +31,15 @@ unconditionally re-parses target line ranges before every iteration, spawns
 concurrent specialized Goldfish auditors based on configuration, and coordinates
 with the Elephant context to resolve findings.
 
+## Review mode contract (read before any dispatch or edit)
+
+Read [Review execution modes](../../resources/review-modes.md) first. Accept and
+propagate `ReviewMode`, `EditScope`, `Checks`, `MaxRounds`, `MaxAgentLaunches`, and
+`MaxParallelAgents`. Default to `ReviewMode: critique`. The mode contract takes
+precedence over remediation gates, convergence rules, and repeat instructions
+below. A stage preset never grants write permission. Preserve the coordinator's
+shared budgets across nested calls and resumes.
+
 ## Delegation
 
 A Goldfish runs in a fresh context with no conversation history. Spawn each
@@ -45,7 +54,7 @@ context is not a Goldfish review.
 
 ## Inputs
 
-The caller or user provides exactly these parameters:
+The caller or user provides these parameters plus the mode contract inputs:
 
 *   **`TargetFile`**: Absolute or relative path to target document.
 *   **`SemanticTarget`**: Descriptive targeting string (e.g., *"Target the H4
@@ -130,7 +139,8 @@ file` mode is specified, confirm full-file line bounds).
         Instruct each subagent to first read its persona definition in
         `agents/{name}.md`, then audit `TargetFile` at the resolved line range
         against its designated standard in `resources/document_standards/`,
-        supplying `GoldfishContext`.
+        supplying `GoldfishContext`, `ReviewMode`, the mode contract path,
+        read-only constraints, and allocated budget. Reviewers never apply fixes.
     *   Each reviewer produces findings with severity (🔴 Blocker, 🟡 Major, 🟢
         Nit), line numbers, discrepancy descriptions, and rationales.
 2.  **Consolidate Findings**: Collect all findings across reviewers into a single
@@ -144,6 +154,10 @@ file` mode is specified, confirm full-file line bounds).
     reviewer as not run.
 
 #### 2.3 Aggregated Resolution Hand-off
+
+In `critique`, write findings and alternatives, then return to the caller after
+this single pass; skip resolver edits and the convergence loop. In `full`, pass
+the mode, authorized scope, checks, and remaining budgets to the resolver.
 
 1.  Pass `TargetFile`, the active line range, and the aggregated `FindingsList`
     to the **`egm-resolve`** workflow.
@@ -159,10 +173,11 @@ file` mode is specified, confirm full-file line bounds).
 Fresh reviewers sample differently each round, so a round with zero findings
 is rare even when the document improves. Use these rules instead:
 
-*   **Settled findings**: A finding is settled when it is contested or
-    recorded without a fix (accepted risk). Keep the settled list across
+*   **Settled findings**: A finding is settled only when independent evidence resolves it or
+    the user explicitly accepts the specific risk. A contest alone stays open. Keep the settled list across
     rounds. If a new reviewer raises a settled finding again (same affected
-    scope, same issue), do not re-open it.
+    scope, same issue), retain the decision only if its evidence and scope
+    still hold. Reopen reintroduced issues or issues with new contrary evidence.
 *   **Fixed findings**: An applied fix does not settle a finding. If a later
     reviewer raises the same issue at the same scope, the fix failed or a
     later edit reintroduced the issue. Re-open the finding.
@@ -170,30 +185,30 @@ is rare even when the document improves. Use these rules instead:
     Major finding that is not settled. Nits do not block. A reviewer recorded
     as not run makes the round not clean. Decide this from the review results,
     before you apply the fixes of that round.
-*   **Converged**: Two consecutive clean rounds. One clean round is not enough,
-    because the next fresh reviewer can find a different gap in the same text.
-*   **Cap**: 5 rounds.
+*   **Verified**: The current target passes the agreed checks and a fresh
+    independent re-review of affected scope; disclose accepted risks separately.
+*   **Cap**: `MaxRounds` from the mode contract; never extend it automatically.
 *   **Churn**: A new finding is at the scope of an applied fix, and reverting
     that fix would resolve it.
 
-On converged, go to Step 3. On cap or churn, write a short list of the open
+On verified, go to Step 3. On cap or churn, write a short list of the open
 findings by severity, then ask the user one question: accept and proceed,
 continue past the cap, or return the document to drafting.
 
-**Crucial Turn-Taking Requirement**: After the resolution phase finishes for a
-given round, the loop driver **MUST respect the turn-taking checkpoint in
-`egm-resolve`**. The driver must remain idle across human turns,
-only looping back to Step 2.1 when the user explicitly confirms they wish to run
-another round of review.
+**Turn boundary**: In `full`, authorized fixes and the required independent
+re-review proceed within the shared budget. Pause on the mode contract's gates;
+never require a redundant confirmation for an already-authorized ordinary fix.
+In `critique`, stop after reporting; do not switch modes implicitly.
 
 ### Step 3: Output Boundary & Final Checkpoint
 
-Upon completion (converged, cap or churn accepted by the user, or manual
+Upon completion (verified, budget exhausted, churn, critique complete, or manual
 halt):
 
 *   **Programmatic Callers**: If running as a subflow of `egm-review`, exit
     cleanly to hand execution back to the parent workflow.
 *   **Manual Invocations**: Output a summary of completion in chat: *"The review
-    loop has completed after [N] rounds ([converged | accepted at cap | halted]).
+    loop has completed after [N] rounds ([verified | budget exhausted | critique complete | halted]).
 Open findings are in the report. Would you like to proceed to
     the next stage, or do you have any final questions?"*
+

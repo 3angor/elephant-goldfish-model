@@ -14,6 +14,15 @@ description: >-
 When running in Codex or ChatGPT Work, first read [Codex integration](../../docs/codex.md).
 In Claude Code or Cowork, read `${CLAUDE_PLUGIN_ROOT}/docs/claude.md` first.
 
+## Review mode contract (read before any dispatch or edit)
+
+Read [Review execution modes](../../resources/review-modes.md) first. Accept and
+propagate `ReviewMode`, `EditScope`, `Checks`, `MaxRounds`, `MaxAgentLaunches`, and
+`MaxParallelAgents`. Default to `ReviewMode: critique`. The mode contract takes
+precedence over remediation gates, convergence rules, and repeat instructions
+below. A stage preset never grants write permission. Preserve the coordinator's
+shared budgets across nested calls and resumes.
+
 ## Overview
 
 This skill instructs the agent on how to operate within the primary Elephant
@@ -29,7 +38,7 @@ repairs, and manages interactive negotiation checkpoints.
 
 ## Inputs
 
-The caller or orchestration driver provides exactly these parameters:
+The caller or orchestration driver provides these parameters plus the mode contract inputs:
 
 *   **`TargetFile`**: Absolute or relative path to target document.
 *   **`LineRange`**: Exact line numbers (or `full file`).
@@ -92,10 +101,15 @@ using your file-writing tool. Use this layout:
 
 **Target:** `[TargetFile]` (`[LineRange]`)
 
+**Mode / scope:** `[ReviewMode]` / `[EditScope]`
+**Budget used / limit:** `[rounds]`, `[launches]`, `[peak parallel]`
+**Verification:** `[check commands/results and independent re-review status]`
+
 ## Prioritized Findings & AI Suggestions
 
 {{range findings, ordered by Severity}}
-### [Issue 1] [`[ReviewerPersona]`] - Severity: [Blocker | Major | Nit]
+### [Finding ID] [Issue 1] [`[ReviewerPersona]`] - Severity: [Blocker | Major | Nit]
+*   **Disposition:** [open | fixed-unverified | verified | user-accepted risk]
 *   **Affected Scope:** [Lines Start-End]([RelativePath]#L[Start]-L[End]) ([Sub-header])
 *   **Discrepancy Description:** [copied from FindingsList]
 *   **Rationale:** [copied from FindingsList]
@@ -107,7 +121,14 @@ using your file-writing tool. Use this layout:
 {{end}}
 ```
 
-### Step 4: Interactive Resolution Gate
+### Step 4: Mode-aware Resolution Gate
+
+In `critique`, return the annotated report without edits and skip the gate below.
+In `full`, apply `PROPOSE FIX` items already covered by `EditScope` without asking
+again, then run `Checks` and hand off for independent re-review. `CONTEST`,
+`ESCALATE`, and skipped items stay open unless resolved as defined in the mode
+contract. Use the interactive gate below only for missing authorization or
+unresolved user decisions. "Continue" or "no changes" does not accept risk.
 
 If any finding is `ESCALATE`, list those findings first in the chat message.
 They need the user's knowledge, not only approval.
@@ -135,8 +156,7 @@ developer to comment on/edit the artifact or reply in the chat.
 
 Interpret the user's action/response as follows:
 
--   **"Auto accept" / "Accept all suggestions" / User clicks "Proceed" without
-    contesting**: Apply all fixes where the AI suggestion was `PROPOSE FIX`
+-   **"Auto accept" / "Accept all suggestions"**: Apply all fixes where the AI suggestion was `PROPOSE FIX`
     directly to `TargetFile` at `LineRange` in a single batch using
     your file-editing tool. Any items categorized as `CONTEST`, `ESCALATE`, or
     `DECLINE` are explicitly bypassed. Then proceed to Step 5.
@@ -181,7 +201,10 @@ Interpret the user's action/response as follows:
 
 1.  **Re-verify Lines**: If changes were made to `TargetFile`, verify that the
     file remains structurally coherent and valid markdown.
-2.  Mark the report as resolved (add a `Status: resolved` line at the top).
+2.  Record per-finding dispositions and actual check results. Use `Status: open
+    findings` or `Status: incomplete verification` until independent re-review
+    supports verification; never mark the entire report resolved by default.
 3.  **Handoff**: Exit cleanly back to the caller (such as `egm-review-loop`)
     with the count of accepted fixes, contested items, escalated items,
     declined items, and remaining unaddressed issues.
+

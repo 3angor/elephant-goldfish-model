@@ -172,3 +172,17 @@ the actual isolation child's answer; test host-added context separately from
 parent-turn isolation. Keep raw account-bearing records private. Publish only
 sanitized findings and candidate identifiers. If the surface cannot expose the
 required evidence, record that boundary and leave the affected checks open.
+
+
+## Fork review-mode checks
+
+Run `python tests/unit/test_review_modes.py` for offline prompt-contract checks.
+They validate mode routing, budgets, risk handling, package inclusion and skill
+size; they do not invoke agents or prove runtime permission enforcement.
+
+Before enabling full mode in a host, probe a disposable fixture: critique leaves
+all target bytes unchanged; full edits only the authorized target, runs the
+agreed check and a fresh re-review; exhausted budgets stop new launches; missing
+reviewers and disputed findings remain open. Test nested dispatch and resume
+without resetting the ledger. Installation and live probes are separate opt-in
+work and consume model quota. Never report these probes passed from static tests.
